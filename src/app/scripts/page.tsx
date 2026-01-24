@@ -1,16 +1,69 @@
 "use client"
 
-import { Plus, Download, Upload, RefreshCw } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Plus, Download, Upload, RefreshCw, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScriptsTable } from "@/components/scripts-table"
-import { mockScripts } from "@/lib/data/mock-data"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Script } from "@/types"
 
 export default function ScriptsPage() {
-  const allScripts = mockScripts
-  const activeScripts = mockScripts.filter(s => s.status !== "inactive")
-  const inactiveScripts = mockScripts.filter(s => s.status === "inactive")
-  const errorScripts = mockScripts.filter(s => s.status === "error" || s.status === "warning")
+  const [scripts, setScripts] = useState<Script[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+
+  async function fetchScripts() {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/scripts')
+      if (!response.ok) {
+        throw new Error('Failed to fetch scripts')
+      }
+      const data = await response.json()
+      setScripts(data.scripts || [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchScripts()
+  }, [])
+
+  async function handleSync() {
+    setSyncing(true)
+    await fetchScripts()
+    setSyncing(false)
+  }
+
+  const allScripts = scripts
+  const activeScripts = scripts.filter(s => s.status !== "inactive")
+  const inactiveScripts = scripts.filter(s => s.status === "inactive")
+  const errorScripts = scripts.filter(s => s.status === "error" || s.status === "warning")
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-muted-foreground">Loading scripts from Google Drive...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Error Loading Scripts</AlertTitle>
+        <AlertDescription>
+          {error}. Make sure you have authenticated with clasp.
+        </AlertDescription>
+      </Alert>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -23,9 +76,9 @@ export default function ScriptsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Sync All
+          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing...' : 'Sync All'}
           </Button>
           <Button variant="outline" size="sm">
             <Download className="mr-2 h-4 w-4" />
