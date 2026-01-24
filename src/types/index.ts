@@ -94,3 +94,77 @@ export interface NotificationSettings {
   dailySummary: boolean
   summaryTime: string
 }
+
+// Script Analysis Types
+export interface ScriptFile {
+  name: string
+  type: string
+  source: string
+  lastModified: string
+}
+
+export interface ScriptProject {
+  scriptId: string
+  name: string
+  parentId: string
+  parentName: string
+  files: ScriptFile[]
+  lastSynced: string
+}
+
+export interface ScriptAnalysis {
+  scriptId: string
+  name: string
+  summary: string
+  functions: FunctionInfo[]
+  externalApis: ApiUsage[]
+  googleServices: string[]
+  triggers: AnalysisTrigger[]
+  dependencies: string[]
+  suggestions: string[]
+  complexity: 'low' | 'medium' | 'high'
+  linesOfCode: number
+  lastAnalyzed: string
+}
+
+export interface FunctionInfo {
+  name: string
+  description: string
+  parameters: string[]
+  isPublic: boolean
+  lineCount: number
+}
+
+export interface ApiUsage {
+  url: string
+  method: string
+  description: string
+  count: number
+}
+
+export interface AnalysisTrigger {
+  type: string
+  function: string
+  schedule?: string
+}
+
+export interface AnalysisStats {
+  totalScripts: number
+  totalFunctions: number
+  totalLinesOfCode: number
+  totalExternalApis: number
+  complexityDistribution: {
+    low: number
+    medium: number
+    high: number
+  }
+  mostUsedServices: { name: string; count: number }[]
+  commonSuggestions: { suggestion: string; count: number }[]
+}
+
+export interface SyncStatus {
+  lastSync: string
+  synced: number
+  failed: number
+  projects?: { name: string; scriptId: string }[]
+}

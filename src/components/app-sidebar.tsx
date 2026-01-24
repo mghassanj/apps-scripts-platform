@@ -11,6 +11,7 @@ import {
   Network,
   Settings,
   Terminal,
+  Microscope,
 } from "lucide-react"
 
 import {
@@ -57,6 +58,11 @@ const navigationItems = [
     title: "Dependencies",
     url: "/dependencies",
     icon: Network,
+  },
+  {
+    title: "Analysis",
+    url: "/analysis",
+    icon: Microscope,
   },
 ]
 
