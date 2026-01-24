@@ -50,8 +50,13 @@ export async function GET() {
 
     const files = response.data.files || []
 
+    // Deduplicate by file ID
+    const uniqueFiles = files.filter((file, index, self) =>
+      index === self.findIndex((f) => f.id === file.id)
+    )
+
     // Transform to Script format
-    const scripts: Script[] = files.map((file, index) => {
+    const scripts: Script[] = uniqueFiles.map((file, index) => {
       const details = inferScriptDetails(file.name || 'Unknown')
       const modifiedTime = file.modifiedTime ? new Date(file.modifiedTime) : new Date()
       const createdTime = file.createdTime ? new Date(file.createdTime) : new Date()

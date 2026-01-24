@@ -1,8 +1,8 @@
 "use client"
 
-import { use } from "react"
+import { use, useEffect, useState } from "react"
 import Link from "next/link"
-import { notFound } from "next/navigation"
+import { useRouter } from "next/navigation"
 import {
   ArrowLeft,
   ExternalLink,
@@ -16,12 +16,12 @@ import {
   FileCode,
   Link2,
   Zap,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Separator } from "@/components/ui/separator"
 import {
   Table,
   TableBody,
@@ -31,8 +31,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { StatusBadge } from "@/components/status-badge"
-import { mockScripts, mockExecutions } from "@/lib/data/mock-data"
 import { formatDistanceToNow, format } from "date-fns"
+import { Script, Execution } from "@/types"
 
 interface ScriptDetailPageProps {
   params: Promise<{ id: string }>
@@ -40,13 +40,83 @@ interface ScriptDetailPageProps {
 
 export default function ScriptDetailPage({ params }: ScriptDetailPageProps) {
   const { id } = use(params)
-  const script = mockScripts.find((s) => s.id === id)
+  const router = useRouter()
+  const [script, setScript] = useState<Script | null>(null)
+  const [executions, setExecutions] = useState<Execution[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  if (!script) {
-    notFound()
+  useEffect(() => {
+    async function fetchScript() {
+      try {
+        const response = await fetch(`/api/scripts/${id}`)
+        if (!response.ok) {
+          if (response.status === 404) {
+            setError('Script not found')
+          } else {
+            setError('Failed to load script')
+          }
+          return
+        }
+        const data = await response.json()
+        // Parse dates from the API response
+        const scriptData: Script = {
+          ...data.script,
+          lastRun: data.script.lastRun ? new Date(data.script.lastRun) : null,
+          nextRun: data.script.nextRun ? new Date(data.script.nextRun) : null,
+          createdAt: new Date(data.script.createdAt),
+          updatedAt: new Date(data.script.updatedAt),
+          triggers: data.script.triggers.map((t: Record<string, unknown>) => ({
+            ...t,
+            lastFire: t.lastFire ? new Date(t.lastFire as string) : null,
+            nextFire: t.nextFire ? new Date(t.nextFire as string) : null,
+          }))
+        }
+        setScript(scriptData)
+      } catch (err) {
+        setError('Failed to load script')
+        console.error(err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchScript()
+  }, [id])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
 
-  const scriptExecutions = mockExecutions.filter((e) => e.scriptId === script.id)
+  if (error || !script) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/scripts">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back
+            </Link>
+          </Button>
+        </div>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center text-muted-foreground">
+              <p className="text-lg font-medium">{error || 'Script not found'}</p>
+              <p className="text-sm mt-2">The script you're looking for doesn't exist or you don't have access to it.</p>
+              <Button className="mt-4" onClick={() => router.push('/scripts')}>
+                View All Scripts
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -267,8 +337,8 @@ export default function ScriptDetailPage({ params }: ScriptDetailPageProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {scriptExecutions.length > 0 ? (
-                    scriptExecutions.map((exec) => (
+                  {executions.length > 0 ? (
+                    executions.map((exec) => (
                       <TableRow key={exec.id}>
                         <TableCell>
                           {format(exec.startTime, "MMM d, HH:mm:ss")}
