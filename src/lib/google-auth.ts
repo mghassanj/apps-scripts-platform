@@ -3,16 +3,48 @@ import { google } from 'googleapis'
 import fs from 'fs'
 import path from 'path'
 
-// Read credentials from clasp config
-function getCredentials() {
+interface GoogleCredentials {
+  client_id: string
+  client_secret: string
+  access_token: string
+  refresh_token: string
+}
+
+// Read credentials from clasp config or environment variables
+function getCredentials(): GoogleCredentials {
+  // First try environment variables (for production)
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_REFRESH_TOKEN) {
+    return {
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+      access_token: process.env.GOOGLE_ACCESS_TOKEN || '',
+      refresh_token: process.env.GOOGLE_REFRESH_TOKEN
+    }
+  }
+
+  // Fall back to local clasp config (for development)
   const clasprcPath = path.join(process.env.HOME || '', '.clasprc.json')
 
   if (!fs.existsSync(clasprcPath)) {
-    throw new Error('clasp credentials not found. Please run "clasp login" first.')
+    throw new Error(
+      'Google credentials not found. Either set GOOGLE_CLIENT_ID and GOOGLE_REFRESH_TOKEN environment variables, ' +
+      'or run "clasp login" locally.'
+    )
   }
 
   const clasprc = JSON.parse(fs.readFileSync(clasprcPath, 'utf-8'))
-  return clasprc.tokens?.default || clasprc.token
+  const token = clasprc.tokens?.default || clasprc.token
+
+  if (!token) {
+    throw new Error('No valid token found in .clasprc.json')
+  }
+
+  return {
+    client_id: token.client_id,
+    client_secret: token.client_secret,
+    access_token: token.access_token,
+    refresh_token: token.refresh_token
+  }
 }
 
 // Create OAuth2 client with clasp credentials
