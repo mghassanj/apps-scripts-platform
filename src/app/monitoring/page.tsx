@@ -1,0 +1,417 @@
+"use client"
+
+import { Activity, CheckCircle, XCircle, Clock, TrendingUp, AlertTriangle, RefreshCw } from "lucide-react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { StatusBadge } from "@/components/status-badge"
+import {
+  ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart"
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis, Bar, BarChart } from "recharts"
+import { mockDashboardStats, mockExecutions, mockScripts, executionTrendData } from "@/lib/data/mock-data"
+import { formatDistanceToNow, format } from "date-fns"
+import Link from "next/link"
+
+const chartConfig = {
+  executions: {
+    label: "Executions",
+    color: "hsl(var(--chart-1))",
+  },
+  errors: {
+    label: "Errors",
+    color: "hsl(var(--chart-2))",
+  },
+} satisfies ChartConfig
+
+export default function MonitoringPage() {
+  const stats = mockDashboardStats
+  const errorExecutions = mockExecutions.filter(e => e.status === "error")
+  const warningExecutions = mockExecutions.filter(e => e.status === "warning")
+  const allIssues = [...errorExecutions, ...warningExecutions]
+
+  // Script health by status
+  const scriptsByStatus = mockScripts.reduce((acc, script) => {
+    acc[script.status] = (acc[script.status] || 0) + 1
+    return acc
+  }, {} as Record<string, number>)
+
+  return (
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Monitoring</h1>
+          <p className="text-muted-foreground">
+            Real-time health monitoring for all your scripts
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-sm">
+            <Activity className="mr-1 h-3 w-3 animate-pulse" />
+            Live
+          </Badge>
+          <Button variant="outline" size="sm">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* Alert Banner */}
+      {allIssues.length > 0 && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Issues Detected</AlertTitle>
+          <AlertDescription>
+            {errorExecutions.length} error{errorExecutions.length !== 1 ? "s" : ""} and{" "}
+            {warningExecutions.length} warning{warningExecutions.length !== 1 ? "s" : ""} in the last 24 hours.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Tabs */}
+      <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="errors">
+            Errors ({errorExecutions.length})
+          </TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
+          <TabsTrigger value="alerts">Alerts</TabsTrigger>
+        </TabsList>
+
+        {/* Overview Tab */}
+        <TabsContent value="overview" className="space-y-4">
+          {/* Stats Cards */}
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Executions Today</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.executionsToday}</div>
+                <p className="text-xs text-muted-foreground">
+                  +12% from yesterday
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+                <CheckCircle className="h-4 w-4 text-green-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">{stats.successRate}%</div>
+                <p className="text-xs text-muted-foreground">
+                  Last 24 hours
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Failures Today</CardTitle>
+                <XCircle className="h-4 w-4 text-red-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-red-600">{errorExecutions.length}</div>
+                <p className="text-xs text-muted-foreground">
+                  Requires attention
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Time</CardTitle>
+                <Clock className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.avgExecutionTime}s</div>
+                <p className="text-xs text-muted-foreground">
+                  Per execution
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Execution Timeline */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Execution Timeline (24h)</CardTitle>
+              <CardDescription>Script executions over the last 24 hours</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ChartContainer config={chartConfig} className="h-[300px] w-full">
+                <AreaChart data={executionTrendData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="time" tickLine={false} axisLine={false} />
+                  <YAxis tickLine={false} axisLine={false} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Area
+                    type="monotone"
+                    dataKey="executions"
+                    stroke="var(--color-executions)"
+                    fill="var(--color-executions)"
+                    fillOpacity={0.2}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="errors"
+                    stroke="var(--color-errors)"
+                    fill="var(--color-errors)"
+                    fillOpacity={0.2}
+                  />
+                </AreaChart>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+
+          {/* Script Health Grid */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Script Health Status</CardTitle>
+              <CardDescription>Current status of all monitored scripts</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-900/20">
+                  <div>
+                    <p className="text-sm font-medium text-green-800 dark:text-green-200">Healthy</p>
+                    <p className="text-2xl font-bold text-green-600">{scriptsByStatus.healthy || 0}</p>
+                  </div>
+                  <CheckCircle className="h-8 w-8 text-green-500" />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-yellow-200 bg-yellow-50 p-4 dark:border-yellow-800 dark:bg-yellow-900/20">
+                  <div>
+                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Warning</p>
+                    <p className="text-2xl font-bold text-yellow-600">{scriptsByStatus.warning || 0}</p>
+                  </div>
+                  <AlertTriangle className="h-8 w-8 text-yellow-500" />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20">
+                  <div>
+                    <p className="text-sm font-medium text-red-800 dark:text-red-200">Error</p>
+                    <p className="text-2xl font-bold text-red-600">{scriptsByStatus.error || 0}</p>
+                  </div>
+                  <XCircle className="h-8 w-8 text-red-500" />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/20">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">Inactive</p>
+                    <p className="text-2xl font-bold text-gray-600">{scriptsByStatus.inactive || 0}</p>
+                  </div>
+                  <Activity className="h-8 w-8 text-gray-400" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Errors Tab */}
+        <TabsContent value="errors" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Error Log</CardTitle>
+              <CardDescription>Recent execution errors and warnings</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Script</TableHead>
+                    <TableHead>Function</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Message</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {allIssues.length > 0 ? (
+                    allIssues.map((exec) => (
+                      <TableRow key={exec.id}>
+                        <TableCell className="whitespace-nowrap">
+                          {format(exec.startTime, "MMM d, HH:mm")}
+                        </TableCell>
+                        <TableCell>
+                          <Link
+                            href={`/scripts/${exec.scriptId}`}
+                            className="font-medium hover:underline"
+                          >
+                            {exec.scriptName}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <code className="text-sm">{exec.function}()</code>
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge
+                            status={exec.status === "error" ? "error" : "warning"}
+                          />
+                        </TableCell>
+                        <TableCell className="max-w-[400px]">
+                          <p className="truncate text-sm text-muted-foreground">
+                            {exec.message}
+                          </p>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        No errors or warnings in the last 24 hours
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Performance Tab */}
+        <TabsContent value="performance" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Execution Performance</CardTitle>
+              <CardDescription>Script execution times and performance metrics</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Script</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Avg Time</TableHead>
+                    <TableHead>Last Run</TableHead>
+                    <TableHead>Executions (24h)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {mockScripts.slice(0, 10).map((script) => (
+                    <TableRow key={script.id}>
+                      <TableCell>
+                        <Link
+                          href={`/scripts/${script.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {script.name}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={script.status} />
+                      </TableCell>
+                      <TableCell>{script.avgExecutionTime.toFixed(1)}s</TableCell>
+                      <TableCell>
+                        {script.lastRun
+                          ? formatDistanceToNow(script.lastRun, { addSuffix: true })
+                          : "Never"}
+                      </TableCell>
+                      <TableCell>
+                        {Math.floor(Math.random() * 50) + 10}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Alerts Tab */}
+        <TabsContent value="alerts" className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Alert Configuration</CardTitle>
+                <CardDescription>Configure when and how you receive alerts</CardDescription>
+              </div>
+              <Button size="sm">Add Alert Rule</Button>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Condition</TableHead>
+                    <TableHead>Action</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell>Script execution fails</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">Email</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="default">Enabled</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm">Edit</Button>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>3+ errors in 1 hour</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">Email + Slack</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="default">Enabled</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm">Edit</Button>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Execution time {">"} 5 minutes</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">Log only</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">Disabled</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm">Edit</Button>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Daily summary</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">Email</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="default">Enabled</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm">Edit</Button>
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
