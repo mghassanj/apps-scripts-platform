@@ -21,7 +21,7 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
 # Run the sync
-npx ts-node scripts/sync-scripts.ts >> logs/sync.log 2>&1
+npx tsx scripts/sync-scripts.ts >> logs/sync.log 2>&1
 
 # Keep only last 1000 lines of log
 tail -1000 logs/sync.log > logs/sync.log.tmp && mv logs/sync.log.tmp logs/sync.log

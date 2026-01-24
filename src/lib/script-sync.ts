@@ -1,9 +1,79 @@
 import { getDriveClient, getScriptClient } from './google-auth'
 import fs from 'fs'
 import path from 'path'
+import { execSync } from 'child_process'
 
 const SCRIPTS_DIR = path.join(process.cwd(), 'synced-scripts')
 const ANALYSIS_DIR = path.join(process.cwd(), 'script-analysis')
+const CONFIG_FILE = path.join(process.cwd(), 'scripts-config.json')
+
+interface ScriptConfig {
+  manualScriptIds: Array<{
+    scriptId: string
+    name: string
+    description?: string
+    enabled: boolean
+  }>
+  autoDiscovery: {
+    enabled: boolean
+    useClasp: boolean
+    useScriptApi: boolean
+    useDriveApi: boolean
+  }
+  syncSettings: {
+    syncIntervalHours: number
+    analyzeAfterSync: boolean
+    maxScripts: number
+  }
+}
+
+// Load configuration
+function loadConfig(): ScriptConfig {
+  const defaultConfig: ScriptConfig = {
+    manualScriptIds: [],
+    autoDiscovery: {
+      enabled: true,
+      useClasp: true,
+      useScriptApi: true,
+      useDriveApi: true
+    },
+    syncSettings: {
+      syncIntervalHours: 1,
+      analyzeAfterSync: true,
+      maxScripts: 100
+    }
+  }
+
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const configData = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'))
+      return { ...defaultConfig, ...configData }
+    }
+  } catch (error) {
+    console.log('  Warning: Could not load config file, using defaults')
+  }
+
+  return defaultConfig
+}
+
+// Get scripts from clasp CLI
+function getScriptsFromClasp(): Array<{ id: string; name: string }> {
+  try {
+    const output = execSync('clasp list', { encoding: 'utf-8' })
+    const lines = output.split('\n').filter(line => line.includes('script.google.com'))
+
+    return lines.map(line => {
+      const match = line.match(/(.+?)\s+-\s+https:\/\/script\.google\.com\/d\/([^\/]+)/)
+      if (match) {
+        return { name: match[1].trim(), id: match[2] }
+      }
+      return null
+    }).filter(Boolean) as Array<{ id: string; name: string }>
+  } catch (error) {
+    console.log('  Warning: clasp list failed')
+    return []
+  }
+}
 
 export interface ScriptFile {
   name: string
@@ -67,18 +137,96 @@ function ensureDirectories() {
   }
 }
 
-// Get all Google Sheets with potential scripts
+// Get all Apps Script projects using multiple discovery methods
 export async function getScriptProjects() {
-  const drive = getDriveClient()
+  const config = loadConfig()
+  const scriptMap = new Map<string, { id: string; name: string; parentId?: string; source: string }>()
 
-  const response = await drive.files.list({
-    q: "mimeType='application/vnd.google-apps.spreadsheet'",
-    fields: 'files(id, name, modifiedTime)',
-    pageSize: 100,
-    orderBy: 'modifiedTime desc'
-  })
+  // 1. Add manual scripts from config
+  for (const manual of config.manualScriptIds) {
+    if (manual.enabled && manual.scriptId !== 'YOUR_SCRIPT_ID_HERE') {
+      scriptMap.set(manual.scriptId, {
+        id: manual.scriptId,
+        name: manual.name,
+        source: 'config'
+      })
+    }
+  }
 
-  return response.data.files || []
+  if (!config.autoDiscovery.enabled) {
+    console.log(`  Found ${scriptMap.size} scripts from config`)
+    return Array.from(scriptMap.values())
+  }
+
+  // 2. Try clasp discovery
+  if (config.autoDiscovery.useClasp) {
+    const claspScripts = getScriptsFromClasp()
+    for (const script of claspScripts) {
+      if (!scriptMap.has(script.id)) {
+        scriptMap.set(script.id, { ...script, source: 'clasp' })
+      }
+    }
+    if (claspScripts.length > 0) {
+      console.log(`  Found ${claspScripts.length} scripts via clasp`)
+    }
+  }
+
+  // 3. Try Script API
+  if (config.autoDiscovery.useScriptApi) {
+    try {
+      const script = getScriptClient()
+      const response = await script.projects.list({ pageSize: 50 })
+      const projects = response.data.projects || []
+
+      for (const p of projects) {
+        if (p.scriptId && !scriptMap.has(p.scriptId)) {
+          scriptMap.set(p.scriptId, {
+            id: p.scriptId,
+            name: p.title || 'Untitled',
+            parentId: p.parentId,
+            source: 'script-api'
+          })
+        }
+      }
+      if (projects.length > 0) {
+        console.log(`  Found ${projects.length} scripts via Script API`)
+      }
+    } catch (error: any) {
+      console.log('  Script API list not available')
+    }
+  }
+
+  // 4. Try Drive API for standalone scripts
+  if (config.autoDiscovery.useDriveApi) {
+    try {
+      const drive = getDriveClient()
+      const response = await drive.files.list({
+        q: "mimeType='application/vnd.google-apps.script'",
+        fields: 'files(id, name, modifiedTime)',
+        pageSize: 100,
+        orderBy: 'modifiedTime desc'
+      })
+
+      const files = response.data.files || []
+      for (const f of files) {
+        if (f.id && !scriptMap.has(f.id)) {
+          scriptMap.set(f.id, {
+            id: f.id,
+            name: f.name || 'Untitled',
+            source: 'drive-api'
+          })
+        }
+      }
+      if (files.length > 0) {
+        console.log(`  Found ${files.length} scripts via Drive API`)
+      }
+    } catch (error: any) {
+      console.log('  Drive API script search not available')
+    }
+  }
+
+  console.log(`  Total unique scripts discovered: ${scriptMap.size}`)
+  return Array.from(scriptMap.values())
 }
 
 // Fetch script content using Apps Script API
@@ -175,20 +323,60 @@ export async function syncScriptProject(fileId: string, fileName: string): Promi
 
 // Sync all scripts
 export async function syncAllScripts(): Promise<{ synced: number; failed: number; projects: ScriptProject[] }> {
-  const sheets = await getScriptProjects()
+  ensureDirectories()
+
+  const scriptProjects = await getScriptProjects()
   const projects: ScriptProject[] = []
   let synced = 0
   let failed = 0
 
-  for (const sheet of sheets) {
+  for (const scriptProj of scriptProjects) {
     try {
-      const project = await syncScriptProject(sheet.id!, sheet.name!)
-      if (project) {
-        projects.push(project)
-        synced++
+      // Directly fetch content since we now have the script ID
+      const files = await fetchScriptContent(scriptProj.id!)
+
+      if (files.length === 0) {
+        console.log(`  ⚠ No files found for ${scriptProj.name}`)
+        continue
       }
+
+      const project: ScriptProject = {
+        scriptId: scriptProj.id!,
+        name: scriptProj.name!,
+        parentId: scriptProj.parentId || '',
+        parentName: scriptProj.name!,
+        files,
+        lastSynced: new Date().toISOString()
+      }
+
+      // Save to disk
+      const projectDir = path.join(SCRIPTS_DIR, sanitizeFileName(scriptProj.name!))
+      if (!fs.existsSync(projectDir)) {
+        fs.mkdirSync(projectDir, { recursive: true })
+      }
+
+      // Save each file
+      for (const file of files) {
+        const ext = file.type === 'HTML' ? '.html' : '.js'
+        const filePath = path.join(projectDir, `${file.name}${ext}`)
+        fs.writeFileSync(filePath, file.source)
+      }
+
+      // Save metadata
+      const metaPath = path.join(projectDir, '_metadata.json')
+      fs.writeFileSync(metaPath, JSON.stringify({
+        scriptId: project.scriptId,
+        parentId: project.parentId,
+        parentName: project.parentName,
+        fileCount: files.length,
+        lastSynced: project.lastSynced
+      }, null, 2))
+
+      projects.push(project)
+      synced++
+      console.log(`  ✓ ${scriptProj.name} (${files.length} files)`)
     } catch (error) {
-      console.error(`Failed to sync ${sheet.name}:`, error)
+      console.error(`  ✗ Failed to sync ${scriptProj.name}:`, error)
       failed++
     }
   }

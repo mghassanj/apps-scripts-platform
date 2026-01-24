@@ -1,13 +1,17 @@
-#!/usr/bin/env npx ts-node
-
 /**
  * Script to sync and analyze all Google Apps Scripts locally
- * Run with: npx ts-node scripts/sync-scripts.ts
+ * Run with: npx tsx scripts/sync-scripts.ts
  * Or set up as a cron job for hourly sync
  */
 
-import { syncAllScripts, analyzeScript, getSyncStatus } from '../src/lib/script-sync'
+import path from 'path'
+import fs from 'fs'
 
+// Set up path aliases to match tsconfig
+const projectRoot = path.resolve(__dirname, '..')
+const srcPath = path.join(projectRoot, 'src')
+
+// Dynamic import from src
 async function main() {
   console.log('='.repeat(50))
   console.log('Google Apps Script Sync & Analysis')
@@ -15,6 +19,11 @@ async function main() {
   console.log('='.repeat(50))
 
   try {
+    // Import the sync module
+    const { syncAllScripts, analyzeScript, getSyncStatus } = await import(
+      path.join(srcPath, 'lib', 'script-sync')
+    )
+
     // Check last sync
     const lastStatus = getSyncStatus()
     if (lastStatus) {
@@ -36,7 +45,7 @@ async function main() {
     let analyzed = 0
     let totalFunctions = 0
     let totalApis = 0
-    let suggestions: string[] = []
+    const suggestions: string[] = []
 
     for (const project of result.projects) {
       try {

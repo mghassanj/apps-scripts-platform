@@ -1,0 +1,22 @@
+{
+  "description": "Configuration for script sync. Add script IDs manually here if they're not auto-discovered.",
+  "manualScriptIds": [
+    {
+      "scriptId": "YOUR_SCRIPT_ID_HERE",
+      "name": "Script Name",
+      "description": "What this script does",
+      "enabled": false
+    }
+  ],
+  "autoDiscovery": {
+    "enabled": true,
+    "useClasp": true,
+    "useScriptApi": true,
+    "useDriveApi": true
+  },
+  "syncSettings": {
+    "syncIntervalHours": 1,
+    "analyzeAfterSync": true,
+    "maxScripts": 100
+  }
+}

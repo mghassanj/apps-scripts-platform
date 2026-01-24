@@ -1,0 +1,25 @@
+{
+  "scriptId": "1jmZ_0s18R4UDTRkpv5nHddsmeufLG_P-wyBI2maPVveZJ4bl7z8cZnXk",
+  "name": "Untitled project",
+  "summary": "Automates spreadsheet operations. Contains 1 functions. Uses Google .",
+  "functions": [
+    {
+      "name": "myFunction",
+      "description": "Function myFunction",
+      "parameters": [],
+      "isPublic": true,
+      "lineCount": 3
+    }
+  ],
+  "externalApis": [],
+  "googleServices": [],
+  "triggers": [],
+  "dependencies": [],
+  "suggestions": [
+    "Add try-catch error handling for better reliability",
+    "Add logging for easier debugging"
+  ],
+  "complexity": "low",
+  "linesOfCode": 4,
+  "lastAnalyzed": "2026-01-24T09:41:52.962Z"
+}
