@@ -40,18 +40,46 @@ export async function GET() {
   try {
     const drive = getDriveClient()
 
-    // Fetch all Google Sheets (which may contain bound scripts)
-    const response = await drive.files.list({
-      q: "mimeType='application/vnd.google-apps.spreadsheet'",
+    // Fetch actual Google Apps Script projects (standalone scripts)
+    const standaloneResponse = await drive.files.list({
+      q: "mimeType='application/vnd.google-apps.script'",
       fields: 'files(id, name, createdTime, modifiedTime, owners)',
       pageSize: 100,
       orderBy: 'modifiedTime desc'
     })
 
-    const files = response.data.files || []
+    const standaloneScripts = standaloneResponse.data.files || []
+
+    // Also get container-bound scripts by looking for spreadsheets that the user owns
+    // and filtering to only show unique names (the main template, not copies)
+    const sheetsResponse = await drive.files.list({
+      q: "mimeType='application/vnd.google-apps.spreadsheet' and 'me' in owners",
+      fields: 'files(id, name, createdTime, modifiedTime, owners)',
+      pageSize: 100,
+      orderBy: 'modifiedTime desc'
+    })
+
+    const sheets = sheetsResponse.data.files || []
+
+    // Deduplicate sheets by name - keep only the most recently modified one per name
+    const sheetsByName = new Map<string, typeof sheets[0]>()
+    for (const sheet of sheets) {
+      const name = sheet.name || 'Unknown'
+      const existing = sheetsByName.get(name)
+      if (!existing || (sheet.modifiedTime && existing.modifiedTime && sheet.modifiedTime > existing.modifiedTime)) {
+        sheetsByName.set(name, sheet)
+      }
+    }
+    const uniqueSheets = Array.from(sheetsByName.values())
+
+    // Combine standalone scripts and unique sheets
+    const allFiles = [
+      ...standaloneScripts.map(f => ({ ...f, fileType: 'standalone' as const })),
+      ...uniqueSheets.map(f => ({ ...f, fileType: 'spreadsheet' as const }))
+    ]
 
     // Deduplicate by file ID
-    const uniqueFiles = files.filter((file, index, self) =>
+    const uniqueFiles = allFiles.filter((file, index, self) =>
       index === self.findIndex((f) => f.id === file.id)
     )
 
@@ -67,6 +95,13 @@ export async function GET() {
       if (hoursSinceModified > 168) status = 'inactive' // > 1 week
       else if (hoursSinceModified > 48) status = 'warning' // > 2 days
 
+      // Determine file type and URL based on source
+      const isStandalone = file.fileType === 'standalone'
+      const fileType: FileType = isStandalone ? 'standalone' : 'spreadsheet'
+      const fileUrl = isStandalone
+        ? `https://script.google.com/d/${file.id}/edit`
+        : `https://docs.google.com/spreadsheets/d/${file.id}`
+
       return {
         id: file.id || `script-${index}`,
         name: file.name || 'Unknown Script',
@@ -74,8 +109,8 @@ export async function GET() {
         parentFile: {
           id: file.id || '',
           name: file.name || '',
-          type: 'spreadsheet' as FileType,
-          url: `https://docs.google.com/spreadsheets/d/${file.id}`
+          type: fileType,
+          url: fileUrl
         },
         status,
         type: details.type,
