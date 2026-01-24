@@ -7,7 +7,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 model Script {
@@ -26,8 +26,8 @@ model Script {
   lastAnalyzedAt  DateTime?
 
   // Analysis results
-  functionalSummary    String?
-  workflowSteps        String?   // JSON array stored as string (SQLite limitation)
+  functionalSummary    String?   @db.Text
+  workflowSteps        String?   @db.Text  // JSON array stored as string
   complexity           String?   // low, medium, high
   linesOfCode          Int?
 
@@ -48,7 +48,7 @@ model ScriptFile {
 
   name        String   // e.g., "Code.gs", "Utils.js"
   type        String   // SERVER_JS, HTML, JSON
-  content     String   // Actual source code
+  content     String   @db.Text  // Actual source code
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -116,7 +116,7 @@ model Execution {
   endedAt     DateTime?
   duration    Float?   // seconds
   status      String   // success, error, timeout
-  errorMessage String?
+  errorMessage String?  @db.Text
 
   createdAt   DateTime @default(now())
 }
@@ -127,8 +127,8 @@ model ScriptFunction {
   script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
 
   name        String
-  description String?  // From JSDoc
-  parameters  String?  // JSON array of parameter names (SQLite limitation)
+  description String?  @db.Text  // From JSDoc
+  parameters  String?  @db.Text  // JSON array of parameter names
   isPublic    Boolean  @default(true)
   lineCount   Int?
   fileName    String?  // Which file it's in
