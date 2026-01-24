@@ -5,6 +5,8 @@ import {
   getSyncStatus,
   getAllAnalyses
 } from '@/lib/script-sync'
+import { syncToDatabase, getDbStats } from '@/lib/db-sync'
+import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300 // 5 minutes for full sync
@@ -16,16 +18,38 @@ export async function GET(request: Request) {
 
   try {
     if (action === 'status') {
-      const status = getSyncStatus()
+      // Get both file-based and database status
+      const fileStatus = getSyncStatus()
+      const dbStats = await getDbStats()
+
+      // Get last sync from database
+      const lastSyncedScript = await prisma.script.findFirst({
+        orderBy: { lastSyncedAt: 'desc' },
+        select: { lastSyncedAt: true }
+      })
+
       return NextResponse.json({
-        status: status ? 'synced' : 'never',
-        ...status
+        status: dbStats.totalScripts > 0 ? 'synced' : fileStatus ? 'file-only' : 'never',
+        database: {
+          totalScripts: dbStats.totalScripts,
+          totalExecutions: dbStats.totalExecutions,
+          executionsToday: dbStats.executionsToday,
+          successRate: dbStats.successRate,
+          lastSync: lastSyncedScript?.lastSyncedAt || null,
+          complexityDistribution: dbStats.complexityDistribution
+        },
+        files: fileStatus
       })
     }
 
     if (action === 'analyses') {
       const analyses = getAllAnalyses()
       return NextResponse.json({ analyses })
+    }
+
+    if (action === 'dbstats') {
+      const stats = await getDbStats()
+      return NextResponse.json({ stats })
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
@@ -42,40 +66,72 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}))
-    const { analyzeAfterSync = true } = body
+    const {
+      analyzeAfterSync = true,
+      useDatabase = true,  // New option to sync to database
+      fileSync = true      // Also sync to files
+    } = body
 
-    // Sync all scripts from Google
-    console.log('Starting script sync...')
-    const syncResult = await syncAllScripts()
-    console.log(`Synced ${syncResult.synced} scripts, ${syncResult.failed} failed`)
-
-    // Analyze each synced script
+    let fileSyncResult = null
+    let dbSyncResult = null
     const analyses = []
-    if (analyzeAfterSync) {
-      console.log('Analyzing scripts...')
-      for (const project of syncResult.projects) {
-        try {
-          const analysis = analyzeScript(project)
-          analyses.push(analysis)
-        } catch (err) {
-          console.error(`Failed to analyze ${project.name}:`, err)
+
+    // File-based sync (existing behavior)
+    if (fileSync) {
+      console.log('Starting file-based script sync...')
+      const syncResult = await syncAllScripts()
+      console.log(`File sync: ${syncResult.synced} synced, ${syncResult.failed} failed`)
+
+      fileSyncResult = {
+        synced: syncResult.synced,
+        failed: syncResult.failed
+      }
+
+      // Analyze each synced script
+      if (analyzeAfterSync) {
+        console.log('Analyzing scripts...')
+        for (const project of syncResult.projects) {
+          try {
+            const analysis = analyzeScript(project)
+            analyses.push(analysis)
+          } catch (err) {
+            console.error(`Failed to analyze ${project.name}:`, err)
+          }
         }
       }
     }
 
+    // Database sync (new behavior)
+    if (useDatabase) {
+      console.log('Starting database sync...')
+      dbSyncResult = await syncToDatabase()
+      console.log(`Database sync: ${dbSyncResult.synced} synced, ${dbSyncResult.failed} failed`)
+    }
+
     return NextResponse.json({
       success: true,
-      synced: syncResult.synced,
-      failed: syncResult.failed,
+      fileSync: fileSyncResult,
+      databaseSync: dbSyncResult ? {
+        synced: dbSyncResult.synced,
+        failed: dbSyncResult.failed,
+        scripts: dbSyncResult.scripts.map(s => ({
+          id: s.id,
+          name: s.name,
+          status: s.status
+        }))
+      } : null,
       analyzed: analyses.length,
       analyses: analyses.map(a => ({
         name: a.name,
-        summary: a.summary,
+        summary: a.functionalSummary?.brief || a.summary,
         complexity: a.complexity,
         linesOfCode: a.linesOfCode,
         functionCount: a.functions.length,
         apiCount: a.externalApis.length,
-        suggestions: a.suggestions.length
+        connectedFiles: a.connectedSpreadsheets?.length || 0,
+        triggerCount: a.triggers.length,
+        suggestions: a.suggestions.length,
+        workflowSteps: a.functionalSummary?.workflowSteps || []
       }))
     })
   } catch (error) {

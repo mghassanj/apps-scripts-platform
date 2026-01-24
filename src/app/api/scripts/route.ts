@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
+import { prisma } from '@/lib/db'
 import { getDriveClient } from '@/lib/google-auth'
 import { Script, FileType } from '@/types'
 
 export const dynamic = 'force-dynamic'
 
-// Map of known script types based on sheet names
+// Map of known script types based on sheet names (fallback for scripts not in DB)
 const SCRIPT_TYPE_MAP: Record<string, { type: Script['type'], description: string }> = {
   'attendance': { type: 'time-driven', description: 'Manages attendance tracking and reminders' },
   'reminder': { type: 'time-driven', description: 'Sends automated reminders' },
@@ -20,27 +21,142 @@ const SCRIPT_TYPE_MAP: Record<string, { type: Script['type'], description: strin
 
 function inferScriptDetails(name: string): { type: Script['type'], description: string, apis: string[] } {
   const nameLower = name.toLowerCase()
-  const apis: string[] = ['Jisr API']
+  const apis: string[] = []
 
-  // Check for known patterns
   for (const [pattern, details] of Object.entries(SCRIPT_TYPE_MAP)) {
     if (nameLower.includes(pattern)) {
       if (nameLower.includes('slack')) apis.push('Slack API')
       if (nameLower.includes('workable')) apis.push('Workable API')
+      if (nameLower.includes('jisr')) apis.push('Jisr API')
       if (nameLower.includes('letter') || nameLower.includes('document')) apis.push('Google Drive API')
       return { ...details, apis }
     }
   }
 
-  // Default
   return { type: 'time-driven', description: `Automation script for ${name}`, apis }
 }
 
 export async function GET() {
   try {
+    // First, try to get scripts from database
+    const dbScripts = await prisma.script.findMany({
+      include: {
+        apis: true,
+        triggers: true,
+        connectedFiles: true,
+        googleServices: true,
+        executions: {
+          take: 1,
+          orderBy: { startedAt: 'desc' }
+        },
+        _count: {
+          select: { functions: true, files: true, executions: true }
+        }
+      },
+      orderBy: { updatedAt: 'desc' }
+    })
+
+    // If we have scripts in database, return them
+    if (dbScripts.length > 0) {
+      const scripts: Script[] = dbScripts.map((dbScript) => {
+        // Parse workflow steps if available
+        let workflowSteps: string[] = []
+        if (dbScript.workflowSteps) {
+          try {
+            workflowSteps = JSON.parse(dbScript.workflowSteps)
+          } catch {
+            workflowSteps = []
+          }
+        }
+
+        // Get the main trigger type
+        const mainTrigger = dbScript.triggers[0]
+        const triggerType = mainTrigger?.type || 'time-driven'
+
+        // Calculate status based on executions
+        let status: Script['status'] = 'healthy'
+        const lastExecution = dbScript.executions[0]
+        if (lastExecution?.status === 'error') {
+          status = 'error'
+        } else if (!lastExecution && dbScript._count.executions === 0) {
+          // Never run
+          const hoursSinceSync = dbScript.lastSyncedAt
+            ? (Date.now() - new Date(dbScript.lastSyncedAt).getTime()) / (1000 * 60 * 60)
+            : 999
+          if (hoursSinceSync > 168) status = 'inactive'
+        }
+
+        // Determine file type
+        let fileType: FileType = 'standalone'
+        if (dbScript.parentFileType === 'spreadsheet') fileType = 'spreadsheet'
+        else if (dbScript.parentFileType === 'document') fileType = 'document'
+
+        return {
+          id: dbScript.id,
+          name: dbScript.name,
+          description: dbScript.functionalSummary || dbScript.description || '',
+          parentFile: {
+            id: dbScript.parentFileId || dbScript.id,
+            name: dbScript.parentFileName || dbScript.name,
+            type: fileType,
+            url: fileType === 'spreadsheet'
+              ? `https://docs.google.com/spreadsheets/d/${dbScript.parentFileId || dbScript.id}`
+              : `https://script.google.com/d/${dbScript.id}/edit`
+          },
+          status,
+          type: triggerType as Script['type'],
+          triggers: dbScript.triggers.map(t => ({
+            id: t.id,
+            type: t.type as Script['type'],
+            function: t.functionName,
+            schedule: t.schedule || undefined,
+            scheduleDescription: t.scheduleDescription || undefined,
+            lastFire: t.lastFiredAt,
+            nextFire: t.nextFireAt,
+            status: t.status as 'enabled' | 'disabled'
+          })),
+          externalAPIs: dbScript.apis.map(a => a.description),
+          sharedLibraries: [],
+          connectedFiles: dbScript.connectedFiles.map(f => ({
+            id: f.id,
+            name: f.fileName || f.fileId,
+            type: f.fileType as FileType,
+            url: f.fileUrl || '',
+            accessType: f.accessType as 'read' | 'write' | 'read-write',
+            fileId: f.fileId,
+            extractedFrom: f.extractedFrom,
+            codeLocation: f.codeLocation || undefined
+          })),
+          lastRun: lastExecution?.startedAt || null,
+          nextRun: mainTrigger?.nextFireAt || null,
+          avgExecutionTime: lastExecution?.duration || 0,
+          owner: dbScript.owner || 'unknown',
+          createdAt: dbScript.createdAt,
+          updatedAt: dbScript.updatedAt,
+          // Enhanced fields
+          functionalSummary: dbScript.functionalSummary || undefined,
+          workflowSteps,
+          complexity: dbScript.complexity as 'low' | 'medium' | 'high' | undefined,
+          linesOfCode: dbScript.linesOfCode || undefined,
+          googleServices: dbScript.googleServices.map(s => s.serviceName),
+          apis: dbScript.apis.map(a => ({
+            id: a.id,
+            url: a.url,
+            baseUrl: a.baseUrl,
+            method: a.method,
+            description: a.description,
+            usageCount: a.usageCount,
+            codeLocation: a.codeLocation || undefined
+          }))
+        }
+      })
+
+      return NextResponse.json({ scripts, count: scripts.length, source: 'database' })
+    }
+
+    // Fallback: Fetch from Google Drive if no database records
     const drive = getDriveClient()
 
-    // Fetch actual Google Apps Script projects (standalone scripts)
     const standaloneResponse = await drive.files.list({
       q: "mimeType='application/vnd.google-apps.script'",
       fields: 'files(id, name, createdTime, modifiedTime, owners)',
@@ -50,8 +166,6 @@ export async function GET() {
 
     const standaloneScripts = standaloneResponse.data.files || []
 
-    // Also get container-bound scripts by looking for spreadsheets that the user owns
-    // and filtering to only show unique names (the main template, not copies)
     const sheetsResponse = await drive.files.list({
       q: "mimeType='application/vnd.google-apps.spreadsheet' and 'me' in owners",
       fields: 'files(id, name, createdTime, modifiedTime, owners)',
@@ -61,7 +175,7 @@ export async function GET() {
 
     const sheets = sheetsResponse.data.files || []
 
-    // Deduplicate sheets by name - keep only the most recently modified one per name
+    // Deduplicate sheets by name
     const sheetsByName = new Map<string, typeof sheets[0]>()
     for (const sheet of sheets) {
       const name = sheet.name || 'Unknown'
@@ -72,30 +186,25 @@ export async function GET() {
     }
     const uniqueSheets = Array.from(sheetsByName.values())
 
-    // Combine standalone scripts and unique sheets
     const allFiles = [
       ...standaloneScripts.map(f => ({ ...f, fileType: 'standalone' as const })),
       ...uniqueSheets.map(f => ({ ...f, fileType: 'spreadsheet' as const }))
     ]
 
-    // Deduplicate by file ID
     const uniqueFiles = allFiles.filter((file, index, self) =>
       index === self.findIndex((f) => f.id === file.id)
     )
 
-    // Transform to Script format
     const scripts: Script[] = uniqueFiles.map((file, index) => {
       const details = inferScriptDetails(file.name || 'Unknown')
       const modifiedTime = file.modifiedTime ? new Date(file.modifiedTime) : new Date()
       const createdTime = file.createdTime ? new Date(file.createdTime) : new Date()
 
-      // Determine status based on last modified time
       const hoursSinceModified = (Date.now() - modifiedTime.getTime()) / (1000 * 60 * 60)
       let status: Script['status'] = 'healthy'
-      if (hoursSinceModified > 168) status = 'inactive' // > 1 week
-      else if (hoursSinceModified > 48) status = 'warning' // > 2 days
+      if (hoursSinceModified > 168) status = 'inactive'
+      else if (hoursSinceModified > 48) status = 'warning'
 
-      // Determine file type and URL based on source
       const isStandalone = file.fileType === 'standalone'
       const fileType: FileType = isStandalone ? 'standalone' : 'spreadsheet'
       const fileUrl = isStandalone
@@ -119,23 +228,28 @@ export async function GET() {
           type: details.type === 'on-edit' ? 'on-edit' : 'time-driven',
           function: 'main',
           schedule: details.type === 'time-driven' ? '0 * * * *' : undefined,
-          lastFire: new Date(Date.now() - Math.random() * 3600000),
-          nextFire: details.type === 'time-driven' ? new Date(Date.now() + Math.random() * 3600000) : null,
-          status: 'enabled'
+          lastFire: null,
+          nextFire: null,
+          status: 'enabled' as const
         }],
         externalAPIs: details.apis,
-        sharedLibraries: ['JisrUtils'],
+        sharedLibraries: [],
         connectedFiles: [],
-        lastRun: new Date(Date.now() - Math.random() * 7200000),
-        nextRun: details.type === 'time-driven' ? new Date(Date.now() + Math.random() * 3600000) : null,
-        avgExecutionTime: Math.random() * 30 + 5,
+        lastRun: null,
+        nextRun: null,
+        avgExecutionTime: 0,
         owner: file.owners?.[0]?.emailAddress || 'unknown',
         createdAt: createdTime,
         updatedAt: modifiedTime
       }
     })
 
-    return NextResponse.json({ scripts, count: scripts.length })
+    return NextResponse.json({
+      scripts,
+      count: scripts.length,
+      source: 'drive',
+      message: 'Run POST /api/sync to populate database with analyzed scripts'
+    })
   } catch (error) {
     console.error('Error fetching scripts:', error)
     return NextResponse.json(

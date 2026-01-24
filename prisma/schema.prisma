@@ -1,0 +1,147 @@
+// Prisma schema for Apps Scripts Platform
+// Stores script code, analysis, and execution data for AI-powered improvements
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Script {
+  id              String   @id  // Google Script ID
+  name            String
+  description     String?
+  parentFileId    String?
+  parentFileName  String?
+  parentFileType  String?  // spreadsheet, document, standalone
+  owner           String?
+
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  lastSyncedAt    DateTime?
+  lastAnalyzedAt  DateTime?
+
+  // Analysis results
+  functionalSummary    String?
+  workflowSteps        String?   // JSON array stored as string (SQLite limitation)
+  complexity           String?   // low, medium, high
+  linesOfCode          Int?
+
+  // Relations
+  files           ScriptFile[]
+  apis            ExternalApi[]
+  triggers        Trigger[]
+  connectedFiles  ConnectedFile[]
+  executions      Execution[]
+  functions       ScriptFunction[]
+  googleServices  GoogleService[]
+}
+
+model ScriptFile {
+  id          String   @id @default(cuid())
+  scriptId    String
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  name        String   // e.g., "Code.gs", "Utils.js"
+  type        String   // SERVER_JS, HTML, JSON
+  content     String   // Actual source code
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([scriptId, name])
+}
+
+model ExternalApi {
+  id          String   @id @default(cuid())
+  scriptId    String
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  url         String
+  baseUrl     String   // Domain/path extracted
+  method      String   // GET, POST, PUT, DELETE
+  description String   // Slack API, Jisr API, etc.
+  usageCount  Int      @default(1)
+  codeLocation String? // file:line
+
+  @@unique([scriptId, url, method])
+}
+
+model Trigger {
+  id          String   @id @default(cuid())
+  scriptId    String
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  type        String   // time-driven, on-edit, on-open, on-form-submit
+  functionName String
+  schedule    String?  // Cron-like or description
+  scheduleDescription String? // "Every hour", "Daily at 9am"
+  sourceEvent String?  // spreadsheet, form, calendar
+  isProgrammatic Boolean @default(false)
+
+  lastFiredAt DateTime?
+  nextFireAt  DateTime?
+  status      String   @default("enabled")
+
+  @@unique([scriptId, functionName, type])
+}
+
+model ConnectedFile {
+  id          String   @id @default(cuid())
+  scriptId    String
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  fileId      String   // Google Drive file ID
+  fileName    String?  // Resolved name
+  fileType    String   // spreadsheet, document, drive
+  fileUrl     String?  // Direct link
+  accessType  String   // read, write, read-write
+  extractedFrom String // openById, openByUrl, getFileById, active
+  codeLocation String? // file:line
+
+  @@unique([scriptId, fileId])
+}
+
+model Execution {
+  id          String   @id @default(cuid())
+  scriptId    String
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  functionName String
+  startedAt   DateTime
+  endedAt     DateTime?
+  duration    Float?   // seconds
+  status      String   // success, error, timeout
+  errorMessage String?
+
+  createdAt   DateTime @default(now())
+}
+
+model ScriptFunction {
+  id          String   @id @default(cuid())
+  scriptId    String
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?  // From JSDoc
+  parameters  String?  // JSON array of parameter names (SQLite limitation)
+  isPublic    Boolean  @default(true)
+  lineCount   Int?
+  fileName    String?  // Which file it's in
+
+  @@unique([scriptId, name])
+}
+
+model GoogleService {
+  id          String   @id @default(cuid())
+  scriptId    String
+  script      Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  serviceName String   // Sheets, Drive, Gmail, Calendar, etc.
+
+  @@unique([scriptId, serviceName])
+}
