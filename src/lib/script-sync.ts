@@ -171,30 +171,8 @@ export async function getScriptProjects() {
     }
   }
 
-  // 3. Try Script API
-  if (config.autoDiscovery.useScriptApi) {
-    try {
-      const script = getScriptClient()
-      const response = await script.projects.list({ pageSize: 50 })
-      const projects = response.data.projects || []
-
-      for (const p of projects) {
-        if (p.scriptId && !scriptMap.has(p.scriptId)) {
-          scriptMap.set(p.scriptId, {
-            id: p.scriptId,
-            name: p.title || 'Untitled',
-            parentId: p.parentId,
-            source: 'script-api'
-          })
-        }
-      }
-      if (projects.length > 0) {
-        console.log(`  Found ${projects.length} scripts via Script API`)
-      }
-    } catch (error: any) {
-      console.log('  Script API list not available')
-    }
-  }
+  // 3. Try Script API (Note: projects.list is not available in the API, skip this step)
+  // The Apps Script API doesn't have a list endpoint, scripts must be discovered via Drive or clasp
 
   // 4. Try Drive API for standalone scripts
   if (config.autoDiscovery.useDriveApi) {
@@ -252,74 +230,9 @@ export async function fetchScriptContent(scriptId: string): Promise<ScriptFile[]
   }
 }
 
-// Try to get the script ID for a container-bound script
-export async function getContainerScriptId(fileId: string): Promise<string | null> {
-  try {
-    const script = getScriptClient()
+// Note: Container-bound scripts cannot be discovered via API
+// They must be discovered via clasp CLI or by providing script IDs in config
 
-    // For container-bound scripts, we need to try getting projects
-    // This is a workaround since there's no direct API
-    const projects = await script.projects.list({})
-
-    const project = projects.data.projects?.find(p =>
-      p.parentId === fileId
-    )
-
-    return project?.scriptId || null
-  } catch (error) {
-    return null
-  }
-}
-
-// Sync a single script project
-export async function syncScriptProject(fileId: string, fileName: string): Promise<ScriptProject | null> {
-  ensureDirectories()
-
-  const scriptId = await getContainerScriptId(fileId)
-
-  if (!scriptId) {
-    return null
-  }
-
-  const files = await fetchScriptContent(scriptId)
-
-  if (files.length === 0) {
-    return null
-  }
-
-  const project: ScriptProject = {
-    scriptId,
-    name: fileName,
-    parentId: fileId,
-    parentName: fileName,
-    files,
-    lastSynced: new Date().toISOString()
-  }
-
-  // Save to disk
-  const projectDir = path.join(SCRIPTS_DIR, sanitizeFileName(fileName))
-  if (!fs.existsSync(projectDir)) {
-    fs.mkdirSync(projectDir, { recursive: true })
-  }
-
-  // Save each file
-  for (const file of files) {
-    const ext = file.type === 'HTML' ? '.html' : '.js'
-    const filePath = path.join(projectDir, `${file.name}${ext}`)
-    fs.writeFileSync(filePath, file.source)
-  }
-
-  // Save metadata
-  const metaPath = path.join(projectDir, '_metadata.json')
-  fs.writeFileSync(metaPath, JSON.stringify({
-    scriptId,
-    parentId: fileId,
-    parentName: fileName,
-    lastSynced: project.lastSynced
-  }, null, 2))
-
-  return project
-}
 
 // Sync all scripts
 export async function syncAllScripts(): Promise<{ synced: number; failed: number; projects: ScriptProject[] }> {
