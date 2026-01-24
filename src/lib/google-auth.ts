@@ -76,3 +76,9 @@ export function getScriptClient() {
   const auth = getOAuth2Client()
   return google.script({ version: 'v1', auth })
 }
+
+// Get Google Sheets API client
+export function getSheetsClient() {
+  const auth = getOAuth2Client()
+  return google.sheets({ version: 'v4', auth })
+}

@@ -1,12 +1,14 @@
 "use client"
 
-import { Search, BookOpen, FileCode, Code2, Wrench, AlertCircle } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Search, BookOpen, FileCode, Code2, Wrench, AlertCircle, Loader2, XCircle } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import Link from "next/link"
-import { mockScripts } from "@/lib/data/mock-data"
+import { Script } from "@/types"
 
 const guides = [
   {
@@ -36,6 +38,38 @@ const guides = [
 ]
 
 export default function DocsPage() {
+  const [scripts, setScripts] = useState<Script[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const response = await fetch('/api/scripts')
+        if (!response.ok) {
+          throw new Error('Failed to fetch scripts from API')
+        }
+        const data = await response.json()
+        setScripts(data.scripts || [])
+      } catch (err) {
+        console.error('Error fetching data:', err)
+        setError(err instanceof Error ? err.message : 'Unknown error')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
+
+  // Filter scripts based on search query
+  const filteredScripts = scripts.filter(script =>
+    script.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    script.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    script.externalAPIs.some(api => api.toLowerCase().includes(searchQuery.toLowerCase()))
+  )
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -52,6 +86,8 @@ export default function DocsPage() {
         <Input
           placeholder="Search documentation..."
           className="pl-10"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
 
@@ -75,41 +111,69 @@ export default function DocsPage() {
       {/* Script Documentation */}
       <div>
         <h2 className="text-xl font-semibold mb-4">Script Documentation</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {mockScripts.slice(0, 9).map((script) => (
-            <Link
-              key={script.id}
-              href={`/scripts/${script.id}`}
-              className="block"
-            >
-              <Card className="hover:bg-muted/50 transition-colors h-full">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center gap-2">
-                    <FileCode className="h-4 w-4 text-muted-foreground" />
-                    <CardTitle className="text-sm font-medium">{script.name}</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
-                    {script.description}
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {script.externalAPIs.slice(0, 2).map((api) => (
-                      <Badge key={api} variant="secondary" className="text-xs">
-                        {api}
-                      </Badge>
-                    ))}
-                    {script.externalAPIs.length > 2 && (
-                      <Badge variant="outline" className="text-xs">
-                        +{script.externalAPIs.length - 2}
-                      </Badge>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+
+        {loading ? (
+          <div className="flex items-center justify-center h-[200px]">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-muted-foreground">Loading scripts from Google...</span>
+          </div>
+        ) : error ? (
+          <Alert variant="destructive">
+            <XCircle className="h-4 w-4" />
+            <AlertTitle>Error Loading Scripts</AlertTitle>
+            <AlertDescription>
+              {error}. Make sure you have authenticated with clasp and the API routes are working.
+            </AlertDescription>
+          </Alert>
+        ) : filteredScripts.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredScripts.slice(0, 9).map((script) => (
+              <Link
+                key={script.id}
+                href={`/scripts/${script.id}`}
+                className="block"
+              >
+                <Card className="hover:bg-muted/50 transition-colors h-full">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center gap-2">
+                      <FileCode className="h-4 w-4 text-muted-foreground" />
+                      <CardTitle className="text-sm font-medium">{script.name}</CardTitle>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+                      {script.description}
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {script.externalAPIs.slice(0, 2).map((api) => (
+                        <Badge key={api} variant="secondary" className="text-xs">
+                          {api}
+                        </Badge>
+                      ))}
+                      {script.externalAPIs.length > 2 && (
+                        <Badge variant="outline" className="text-xs">
+                          +{script.externalAPIs.length - 2}
+                        </Badge>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-muted-foreground">
+            {searchQuery ? `No scripts found matching "${searchQuery}"` : "No scripts found"}
+          </div>
+        )}
+
+        {!loading && !error && scripts.length > 9 && (
+          <div className="mt-4 text-center">
+            <Link href="/scripts" className="text-sm text-muted-foreground hover:underline">
+              View all {scripts.length} scripts
             </Link>
-          ))}
-        </div>
+          </div>
+        )}
       </div>
 
       <Separator />

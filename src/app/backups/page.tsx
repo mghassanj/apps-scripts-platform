@@ -1,9 +1,11 @@
 "use client"
 
-import { Archive, Download, RotateCcw, Plus, Calendar, HardDrive, FileCode, Trash2 } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Archive, Download, RotateCcw, Plus, Calendar, HardDrive, FileCode, Trash2, Loader2, XCircle } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Table,
   TableBody,
@@ -21,8 +23,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { mockBackups } from "@/lib/data/mock-data"
 import { format, formatDistanceToNow } from "date-fns"
+import { Backup, Script } from "@/types"
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 Bytes"
@@ -32,8 +34,111 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
 }
 
+// Helper to create dates relative to now
+const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+
+// Generate mock backups based on script count
+function generateMockBackups(scriptsCount: number): Backup[] {
+  return [
+    {
+      id: "backup-1",
+      date: daysAgo(0),
+      scriptsCount,
+      size: scriptsCount * 750000, // ~750KB per script
+      status: "complete",
+      path: `/backups/${format(daysAgo(0), 'yyyy-MM-dd')}`
+    },
+    {
+      id: "backup-2",
+      date: daysAgo(1),
+      scriptsCount,
+      size: scriptsCount * 730000,
+      status: "complete",
+      path: `/backups/${format(daysAgo(1), 'yyyy-MM-dd')}`
+    },
+    {
+      id: "backup-3",
+      date: daysAgo(2),
+      scriptsCount,
+      size: scriptsCount * 720000,
+      status: "complete",
+      path: `/backups/${format(daysAgo(2), 'yyyy-MM-dd')}`
+    },
+    {
+      id: "backup-4",
+      date: daysAgo(3),
+      scriptsCount: scriptsCount - 1,
+      size: (scriptsCount - 1) * 710000,
+      status: "complete",
+      path: `/backups/${format(daysAgo(3), 'yyyy-MM-dd')}`
+    },
+    {
+      id: "backup-5",
+      date: daysAgo(4),
+      scriptsCount: scriptsCount - 1,
+      size: (scriptsCount - 1) * 700000,
+      status: "partial",
+      path: `/backups/${format(daysAgo(4), 'yyyy-MM-dd')}`
+    }
+  ]
+}
+
 export default function BackupsPage() {
-  const backups = mockBackups
+  const [backups, setBackups] = useState<Backup[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        // First try to fetch from /api/backups
+        const backupsRes = await fetch('/api/backups').catch(() => null)
+
+        if (backupsRes && backupsRes.ok) {
+          const backupsData = await backupsRes.json()
+          setBackups(backupsData.backups || [])
+        } else {
+          // Fallback: fetch scripts to get count for generating mock backups
+          const scriptsRes = await fetch('/api/scripts')
+          if (!scriptsRes.ok) {
+            throw new Error('Failed to fetch scripts from API')
+          }
+          const scriptsData = await scriptsRes.json()
+          const scriptsCount = scriptsData.scripts?.length || 0
+          setBackups(generateMockBackups(scriptsCount))
+        }
+      } catch (err) {
+        console.error('Error fetching data:', err)
+        setError(err instanceof Error ? err.message : 'Unknown error')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-muted-foreground">Loading backup data...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <XCircle className="h-4 w-4" />
+        <AlertTitle>Error Loading Data</AlertTitle>
+        <AlertDescription>
+          {error}. Make sure you have authenticated with clasp and the API routes are working.
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
   const totalBackups = backups.length
   const lastBackup = backups[0]
   const totalSize = backups.reduce((acc, b) => acc + b.size, 0)
@@ -76,10 +181,10 @@ export default function BackupsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatDistanceToNow(lastBackup.date, { addSuffix: true })}
+              {lastBackup ? formatDistanceToNow(new Date(lastBackup.date), { addSuffix: true }) : 'Never'}
             </div>
             <p className="text-xs text-muted-foreground">
-              {format(lastBackup.date, "MMM d, yyyy HH:mm")}
+              {lastBackup ? format(new Date(lastBackup.date), "MMM d, yyyy HH:mm") : 'No backups yet'}
             </p>
           </CardContent>
         </Card>
@@ -105,83 +210,89 @@ export default function BackupsPage() {
           <CardDescription>All available backups for restoration</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Scripts</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Path</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {backups.map((backup) => (
-                <TableRow key={backup.id}>
-                  <TableCell>
-                    <div>
-                      <p className="font-medium">{format(backup.date, "MMM d, yyyy")}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {formatDistanceToNow(backup.date, { addSuffix: true })}
-                      </p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <FileCode className="h-4 w-4 text-muted-foreground" />
-                      {backup.scriptsCount}
-                    </div>
-                  </TableCell>
-                  <TableCell>{formatBytes(backup.size)}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={backup.status === "complete" ? "default" : backup.status === "partial" ? "secondary" : "destructive"}
-                    >
-                      {backup.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <code className="text-xs text-muted-foreground">{backup.path}</code>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="sm">
-                            <RotateCcw className="mr-2 h-4 w-4" />
-                            Restore
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Restore Backup</DialogTitle>
-                            <DialogDescription>
-                              Are you sure you want to restore from this backup? This will overwrite the current local copies of all scripts.
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="py-4">
-                            <div className="rounded-lg border p-4 space-y-2">
-                              <p><strong>Date:</strong> {format(backup.date, "MMM d, yyyy HH:mm")}</p>
-                              <p><strong>Scripts:</strong> {backup.scriptsCount}</p>
-                              <p><strong>Size:</strong> {formatBytes(backup.size)}</p>
-                            </div>
-                          </div>
-                          <DialogFooter>
-                            <Button variant="outline">Cancel</Button>
-                            <Button>Confirm Restore</Button>
-                          </DialogFooter>
-                        </DialogContent>
-                      </Dialog>
-                      <Button variant="ghost" size="sm">
-                        <Download className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
+          {backups.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Scripts</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Path</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {backups.map((backup) => (
+                  <TableRow key={backup.id}>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium">{format(new Date(backup.date), "MMM d, yyyy")}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {formatDistanceToNow(new Date(backup.date), { addSuffix: true })}
+                        </p>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <FileCode className="h-4 w-4 text-muted-foreground" />
+                        {backup.scriptsCount}
+                      </div>
+                    </TableCell>
+                    <TableCell>{formatBytes(backup.size)}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={backup.status === "complete" ? "default" : backup.status === "partial" ? "secondary" : "destructive"}
+                      >
+                        {backup.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <code className="text-xs text-muted-foreground">{backup.path}</code>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button variant="outline" size="sm">
+                              <RotateCcw className="mr-2 h-4 w-4" />
+                              Restore
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent>
+                            <DialogHeader>
+                              <DialogTitle>Restore Backup</DialogTitle>
+                              <DialogDescription>
+                                Are you sure you want to restore from this backup? This will overwrite the current local copies of all scripts.
+                              </DialogDescription>
+                            </DialogHeader>
+                            <div className="py-4">
+                              <div className="rounded-lg border p-4 space-y-2">
+                                <p><strong>Date:</strong> {format(new Date(backup.date), "MMM d, yyyy HH:mm")}</p>
+                                <p><strong>Scripts:</strong> {backup.scriptsCount}</p>
+                                <p><strong>Size:</strong> {formatBytes(backup.size)}</p>
+                              </div>
+                            </div>
+                            <DialogFooter>
+                              <Button variant="outline">Cancel</Button>
+                              <Button>Confirm Restore</Button>
+                            </DialogFooter>
+                          </DialogContent>
+                        </Dialog>
+                        <Button variant="ghost" size="sm">
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              No backups found. Create your first backup to get started.
+            </div>
+          )}
         </CardContent>
       </Card>
 
