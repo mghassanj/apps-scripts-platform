@@ -52,7 +52,7 @@ export async function fetchScriptExecutions(scriptId: string): Promise<{
     // Fetch processes (executions) for this script using listScriptProcesses
     const response = await scriptClient.processes.listScriptProcesses({
       scriptId,
-      pageSize: 50, // Get last 50 executions
+      pageSize: 300, // Get last 300 executions
     })
 
     const processes = response.data.processes || []
