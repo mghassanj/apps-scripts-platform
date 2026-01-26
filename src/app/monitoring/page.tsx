@@ -133,6 +133,11 @@ export default function MonitoringPage() {
 
   const errorExecutions = executions.filter(e => e.status === "error")
   const warningExecutions = executions.filter(e => e.status === "warning")
+
+  // Also get scripts with error/warning status (from database-tracked executions)
+  const errorScripts = scripts.filter(s => s.status === "error")
+  const warningScripts = scripts.filter(s => s.status === "warning")
+
   const allIssues = [...errorExecutions, ...warningExecutions]
 
   // Script health by status
@@ -190,7 +195,7 @@ export default function MonitoringPage() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="errors">
-            Errors ({errorExecutions.length})
+            Errors ({errorScripts.length + warningScripts.length + errorExecutions.length})
           </TabsTrigger>
           <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
@@ -331,10 +336,62 @@ export default function MonitoringPage() {
 
         {/* Errors Tab */}
         <TabsContent value="errors" className="space-y-4">
+          {/* Scripts with Error Status */}
+          {(errorScripts.length > 0 || warningScripts.length > 0) && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Scripts with Issues</CardTitle>
+                <CardDescription>Scripts currently in error or warning state based on their last execution</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Script</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Last Run</TableHead>
+                      <TableHead>Avg Time</TableHead>
+                      <TableHead>Parent File</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {[...errorScripts, ...warningScripts].map((script) => (
+                      <TableRow key={script.id}>
+                        <TableCell>
+                          <Link
+                            href={`/scripts/${script.id}`}
+                            className="font-medium hover:underline"
+                          >
+                            {script.name}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge status={script.status} />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {script.lastRun
+                            ? formatDistanceToNow(new Date(script.lastRun), { addSuffix: true })
+                            : "Never"}
+                        </TableCell>
+                        <TableCell>{script.avgExecutionTime.toFixed(1)}s</TableCell>
+                        <TableCell className="max-w-[200px]">
+                          <span className="truncate text-sm text-muted-foreground">
+                            {script.parentFile?.name || 'Standalone'}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Execution Errors Log */}
           <Card>
             <CardHeader>
-              <CardTitle>Error Log</CardTitle>
-              <CardDescription>Recent execution errors and warnings</CardDescription>
+              <CardTitle>Execution Error Log</CardTitle>
+              <CardDescription>Recent execution errors and warnings from logs</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -380,7 +437,7 @@ export default function MonitoringPage() {
                   ) : (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center text-muted-foreground">
-                        No errors or warnings in the last 24 hours
+                        No execution errors in the logs
                       </TableCell>
                     </TableRow>
                   )}
