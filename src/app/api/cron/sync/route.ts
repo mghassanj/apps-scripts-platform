@@ -8,6 +8,10 @@ export const maxDuration = 300 // 5 minutes max for sync
  *
  * Security: Requires CRON_SECRET header to match environment variable
  * This prevents unauthorized triggering of the sync
+ *
+ * This endpoint syncs both:
+ * 1. Script content (code, functions, APIs, etc.)
+ * 2. Execution logs from Google Apps Script
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -27,7 +31,8 @@ export async function GET(request: NextRequest) {
                     process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` :
                     'http://localhost:3000'
 
-    // Call the sync endpoint internally
+    // 1. Sync script content
+    console.log('Cron: Starting script content sync...')
     const syncResponse = await fetch(`${baseUrl}/api/sync`, {
       method: 'POST',
       headers: {
@@ -35,24 +40,45 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    const result = await syncResponse.json()
+    const syncResult = await syncResponse.json()
 
     if (!syncResponse.ok) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Sync failed',
-          details: result,
+          error: 'Script sync failed',
+          details: syncResult,
           timestamp: new Date().toISOString()
         },
         { status: syncResponse.status }
       )
     }
 
+    // 2. Sync execution logs
+    console.log('Cron: Starting execution logs sync...')
+    let executionResult = null
+    try {
+      const execResponse = await fetch(`${baseUrl}/api/sync/executions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+      executionResult = await execResponse.json()
+
+      if (!execResponse.ok) {
+        console.error('Execution sync failed:', executionResult)
+      }
+    } catch (execError) {
+      console.error('Execution sync error:', execError)
+      executionResult = { error: execError instanceof Error ? execError.message : 'Unknown error' }
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Cron sync completed',
-      result,
+      scriptSync: syncResult,
+      executionSync: executionResult,
       timestamp: new Date().toISOString()
     })
 
