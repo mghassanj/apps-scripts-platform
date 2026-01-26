@@ -144,7 +144,7 @@ export async function getScriptProjects() {
       const response = await drive.files.list({
         q: "mimeType='application/vnd.google-apps.script'",
         fields: 'files(id, name, modifiedTime)',
-        pageSize: 100,
+        pageSize: 1000,
         orderBy: 'modifiedTime desc'
       })
 
@@ -195,11 +195,11 @@ async function discoverBoundScripts(): Promise<Array<{ id: string; name: string;
     const drive = getDriveClient()
     const script = getScriptClient()
 
-    // List spreadsheets owned by user
+    // List spreadsheets owned by user (max 1000 per page)
     const response = await drive.files.list({
       q: "mimeType='application/vnd.google-apps.spreadsheet' and 'me' in owners",
       fields: 'files(id, name)',
-      pageSize: 50,
+      pageSize: 1000,
       orderBy: 'modifiedTime desc'
     })
 
