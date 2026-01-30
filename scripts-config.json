@@ -6,6 +6,12 @@
       "name": "Script Name",
       "description": "What this script does",
       "enabled": false
+    },
+    {
+      "scriptId": "1YqJoNcre5U6GqNFKxpenCjcFtnP5jF9fBktXfa3IDHMSq5I6ZxT44fl8",
+      "name": "Master Works Letter Generator",
+      "description": "Letter generator script",
+      "enabled": true
     }
   ],
   "autoDiscovery": {
