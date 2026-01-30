@@ -51,7 +51,7 @@ export async function syncToDatabase(): Promise<SyncResult> {
     scripts: []
   }
 
-  console.log('Starting database sync...')
+  console.log('Starting database sync... [v2-dedup-fix]')
 
   // 1. Discover all scripts
   const discoveredScripts = await getScriptProjects()
@@ -128,7 +128,7 @@ export async function syncToDatabase(): Promise<SyncResult> {
       }
       const deduplicatedApis = Array.from(seenApis.values())
       
-      // Double-check for duplicates before inserting
+      // Double-check for duplicates before inserting (v2 - force rebuild)
       const finalKeys = new Set<string>()
       const finalApis = deduplicatedApis.filter(api => {
         const key = `${api.url}::${api.method}`
