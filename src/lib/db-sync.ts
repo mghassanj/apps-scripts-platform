@@ -128,6 +128,11 @@ export async function syncToDatabase(): Promise<SyncResult> {
       }
       const deduplicatedApis = Array.from(seenApis.values())
 
+      // Delete existing APIs first to avoid unique constraint issues
+      await prisma.externalApi.deleteMany({
+        where: { scriptId: scriptInfo.id }
+      })
+
       // Store in database with upsert
       await prisma.script.upsert({
         where: { id: scriptInfo.id },
@@ -152,7 +157,6 @@ export async function syncToDatabase(): Promise<SyncResult> {
             }))
           },
           apis: {
-            deleteMany: {},
             create: deduplicatedApis.map(api => ({
               url: api.url,
               baseUrl: extractBaseUrl(api.url),
