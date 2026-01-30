@@ -825,8 +825,12 @@ function extractSingleFunction(code: string, match: RegExpExecArray, fileName?: 
 }
 
 // Extract external API calls (enhanced with code location)
+// NOTE: Uses composite key (baseUrl + method) to avoid duplicate constraint violations
 function extractExternalApis(code: string): ApiUsage[] {
   const apis: Map<string, ApiUsage> = new Map()
+
+  // Helper to create composite key for deduplication
+  const makeKey = (url: string, method: string) => `${extractBaseUrl(url)}::${method}`
 
   // UrlFetchApp patterns with hardcoded URLs
   const fetchRegex = /UrlFetchApp\.fetch(?:All)?\s*\(\s*['"`]([^'"`]+)['"`]/g
@@ -834,15 +838,18 @@ function extractExternalApis(code: string): ApiUsage[] {
 
   while ((match = fetchRegex.exec(code)) !== null) {
     const url = match[1]
+    const method = detectHttpMethod(code, match.index)
+    const baseUrl = extractBaseUrl(url)
+    const key = makeKey(url, method)
     const lineNum = getLineNumber(code, match.index)
-    const existing = apis.get(url)
+    const existing = apis.get(key)
 
     if (existing) {
       existing.count++
     } else {
-      apis.set(url, {
-        url: extractBaseUrl(url),
-        method: detectHttpMethod(code, match.index),
+      apis.set(key, {
+        url: baseUrl,
+        method,
         description: inferApiDescription(url),
         count: 1,
         codeLocation: `line ${lineNum}`
@@ -854,11 +861,13 @@ function extractExternalApis(code: string): ApiUsage[] {
   const urlVarRegex = /(?:const|let|var)\s+\w*[Uu]rl\w*\s*=\s*['"`]([^'"`]+)['"`]/g
   while ((match = urlVarRegex.exec(code)) !== null) {
     const url = match[1]
-    if (url.startsWith('http') && !apis.has(url)) {
+    const method = 'GET'
+    const key = makeKey(url, method)
+    if (url.startsWith('http') && !apis.has(key)) {
       const lineNum = getLineNumber(code, match.index)
-      apis.set(url, {
+      apis.set(key, {
         url: extractBaseUrl(url),
-        method: 'GET',
+        method,
         description: inferApiDescription(url),
         count: 1,
         codeLocation: `line ${lineNum}`
@@ -870,11 +879,13 @@ function extractExternalApis(code: string): ApiUsage[] {
   const configUrlRegex = /(?:BASE_URL|API_URL|ENDPOINT|baseUrl|apiUrl|endpoint|api_url|base_url)\s*[:=]\s*['"`](https?:\/\/[^'"`]+)['"`]/gi
   while ((match = configUrlRegex.exec(code)) !== null) {
     const url = match[1]
-    if (!apis.has(url)) {
+    const method = 'GET'
+    const key = makeKey(url, method)
+    if (!apis.has(key)) {
       const lineNum = getLineNumber(code, match.index)
-      apis.set(url, {
+      apis.set(key, {
         url: extractBaseUrl(url),
-        method: 'GET',
+        method,
         description: inferApiDescription(url),
         count: 1,
         codeLocation: `line ${lineNum}`
@@ -888,12 +899,15 @@ function extractExternalApis(code: string): ApiUsage[] {
     const url = match[1]
     // Skip if it's clearly not an API (images, cdn, etc.)
     if (/\.(png|jpg|jpeg|gif|svg|css|js|ico|woff|ttf)$/i.test(url)) continue
-    if (apis.has(url)) continue
+    
+    const method = 'GET'
+    const key = makeKey(url, method)
+    if (apis.has(key)) continue
 
     const lineNum = getLineNumber(code, match.index)
-    apis.set(url, {
+    apis.set(key, {
       url: extractBaseUrl(url),
-      method: 'GET',
+      method,
       description: inferApiDescription(url),
       count: 1,
       codeLocation: `line ${lineNum}`

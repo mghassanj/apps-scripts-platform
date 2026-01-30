@@ -105,6 +105,17 @@ export async function syncToDatabase(): Promise<SyncResult> {
       const isContainerBound = scriptInfo.source === 'container-bound' && scriptInfo.parentId
       const parentFileType = isContainerBound ? 'spreadsheet' : 'standalone'
 
+      // Deduplicate APIs by (url, method) to avoid unique constraint violations
+      const seenApis = new Set<string>()
+      const deduplicatedApis = analysis.externalApis.filter(api => {
+        const key = `${api.url}::${api.method}`
+        if (seenApis.has(key)) {
+          return false
+        }
+        seenApis.add(key)
+        return true
+      })
+
       // Store in database with upsert
       await prisma.script.upsert({
         where: { id: scriptInfo.id },
@@ -130,7 +141,7 @@ export async function syncToDatabase(): Promise<SyncResult> {
           },
           apis: {
             deleteMany: {},
-            create: analysis.externalApis.map(api => ({
+            create: deduplicatedApis.map(api => ({
               url: api.url,
               baseUrl: extractBaseUrl(api.url),
               method: api.method,
@@ -201,7 +212,7 @@ export async function syncToDatabase(): Promise<SyncResult> {
             }))
           },
           apis: {
-            create: analysis.externalApis.map(api => ({
+            create: deduplicatedApis.map(api => ({
               url: api.url,
               baseUrl: extractBaseUrl(api.url),
               method: api.method,
