@@ -127,6 +127,23 @@ export async function syncToDatabase(): Promise<SyncResult> {
         }
       }
       const deduplicatedApis = Array.from(seenApis.values())
+      
+      // Double-check for duplicates before inserting
+      const finalKeys = new Set<string>()
+      const finalApis = deduplicatedApis.filter(api => {
+        const key = `${api.url}::${api.method}`
+        if (finalKeys.has(key)) {
+          console.log(`    [WARN] Duplicate API after dedup: ${key}`)
+          return false
+        }
+        finalKeys.add(key)
+        return true
+      })
+      
+      if (finalApis.length !== deduplicatedApis.length) {
+        console.log(`    [WARN] Removed ${deduplicatedApis.length - finalApis.length} duplicates for ${scriptInfo.name}`)
+      }
+      console.log(`    [DEBUG] Inserting ${finalApis.length} APIs for ${scriptInfo.name}`)
 
       // Delete existing APIs first to avoid unique constraint issues
       await prisma.externalApi.deleteMany({
@@ -157,7 +174,7 @@ export async function syncToDatabase(): Promise<SyncResult> {
             }))
           },
           apis: {
-            create: deduplicatedApis.map(api => ({
+            create: finalApis.map(api => ({
               url: api.url,
               baseUrl: extractBaseUrl(api.url),
               method: api.method,
@@ -228,7 +245,7 @@ export async function syncToDatabase(): Promise<SyncResult> {
             }))
           },
           apis: {
-            create: deduplicatedApis.map(api => ({
+            create: finalApis.map(api => ({
               url: api.url,
               baseUrl: extractBaseUrl(api.url),
               method: api.method,
