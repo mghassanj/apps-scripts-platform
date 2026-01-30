@@ -186,7 +186,7 @@ export async function discoverScripts(): Promise<DiscoveryResult> {
       }
     }
 
-    pageToken = response.data.nextPageToken
+    pageToken = response.data.nextPageToken ?? undefined
     pageCount++
 
     // Limit to avoid timeout
