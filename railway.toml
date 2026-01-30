@@ -1,5 +1,8 @@
 [build]
-builder = "railpack"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "prisma migrate deploy && npm run start"
+startCommand = ""
+healthcheckPath = "/api/sync"
+healthcheckTimeout = 30
