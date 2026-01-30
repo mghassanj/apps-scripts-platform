@@ -8,6 +8,7 @@ echo "Starting sync at $(date)"
 echo "Target: $APP_URL/api/cron/sync"
 
 response=$(curl -s -w "\n%{http_code}" \
+  --max-time 300 \
   -X GET \
   -H "x-cron-secret: $CRON_SECRET" \
   "$APP_URL/api/cron/sync")
