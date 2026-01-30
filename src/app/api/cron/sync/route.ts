@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 300 // 5 minutes max for sync
 
 /**
- * Cron endpoint for automatic script syncing
+ * Cron endpoint for automatic script syncing (ASYNC)
  *
  * Security: Requires CRON_SECRET header to match environment variable
  * This prevents unauthorized triggering of the sync
  *
- * This endpoint syncs both:
- * 1. Script content (code, functions, APIs, etc.)
- * 2. Execution logs from Google Apps Script
+ * This endpoint triggers sync in the background and returns immediately.
+ * Sync runs async - cron doesn't wait for completion.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -25,85 +23,40 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  try {
-    // Get the base URL for internal API call
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ||
-                    process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` :
-                    'http://localhost:3000'
+  // Get the base URL for internal API call
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ||
+                  process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` :
+                  'http://localhost:3000'
 
-    // 1. Sync script content
-    console.log('Cron: Starting script content sync...')
-    const syncController = new AbortController()
-    const syncTimeout = setTimeout(() => syncController.abort(), 240000) // 4 min timeout
-    
-    const syncResponse = await fetch(`${baseUrl}/api/sync`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      signal: syncController.signal
-    })
-    clearTimeout(syncTimeout)
+  // Fire and forget - trigger sync without waiting
+  console.log('Cron: Triggering async script sync...')
+  
+  // Trigger script sync (don't await)
+  fetch(`${baseUrl}/api/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  }).then(res => {
+    console.log(`Cron: Script sync completed with status ${res.status}`)
+  }).catch(err => {
+    console.error('Cron: Script sync error:', err.message)
+  })
 
-    const syncResult = await syncResponse.json()
+  // Trigger execution logs sync (don't await)
+  fetch(`${baseUrl}/api/sync/executions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  }).then(res => {
+    console.log(`Cron: Execution sync completed with status ${res.status}`)
+  }).catch(err => {
+    console.error('Cron: Execution sync error:', err.message)
+  })
 
-    if (!syncResponse.ok) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Script sync failed',
-          details: syncResult,
-          timestamp: new Date().toISOString()
-        },
-        { status: syncResponse.status }
-      )
-    }
-
-    // 2. Sync execution logs
-    console.log('Cron: Starting execution logs sync...')
-    let executionResult = null
-    try {
-      const execController = new AbortController()
-      const execTimeout = setTimeout(() => execController.abort(), 60000) // 1 min timeout
-      
-      const execResponse = await fetch(`${baseUrl}/api/sync/executions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        signal: execController.signal
-      })
-      clearTimeout(execTimeout)
-      executionResult = await execResponse.json()
-
-      if (!execResponse.ok) {
-        console.error('Execution sync failed:', executionResult)
-      }
-    } catch (execError) {
-      console.error('Execution sync error:', execError)
-      executionResult = { error: execError instanceof Error ? execError.message : 'Unknown error' }
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: 'Cron sync completed',
-      scriptSync: syncResult,
-      executionSync: executionResult,
-      timestamp: new Date().toISOString()
-    })
-
-  } catch (error) {
-    console.error('Cron sync error:', error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Cron sync failed',
-        details: error instanceof Error ? error.message : String(error),
-        timestamp: new Date().toISOString()
-      },
-      { status: 500 }
-    )
-  }
+  // Return immediately
+  return NextResponse.json({
+    success: true,
+    message: 'Sync triggered (running async)',
+    timestamp: new Date().toISOString()
+  })
 }
 
 // Also support POST for flexibility
