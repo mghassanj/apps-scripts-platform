@@ -33,12 +33,17 @@ export async function GET(request: NextRequest) {
 
     // 1. Sync script content
     console.log('Cron: Starting script content sync...')
+    const syncController = new AbortController()
+    const syncTimeout = setTimeout(() => syncController.abort(), 240000) // 4 min timeout
+    
     const syncResponse = await fetch(`${baseUrl}/api/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
-      }
+      },
+      signal: syncController.signal
     })
+    clearTimeout(syncTimeout)
 
     const syncResult = await syncResponse.json()
 
@@ -58,12 +63,17 @@ export async function GET(request: NextRequest) {
     console.log('Cron: Starting execution logs sync...')
     let executionResult = null
     try {
+      const execController = new AbortController()
+      const execTimeout = setTimeout(() => execController.abort(), 60000) // 1 min timeout
+      
       const execResponse = await fetch(`${baseUrl}/api/sync/executions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        signal: execController.signal
       })
+      clearTimeout(execTimeout)
       executionResult = await execResponse.json()
 
       if (!execResponse.ok) {
