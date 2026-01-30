@@ -106,15 +106,28 @@ export async function syncToDatabase(): Promise<SyncResult> {
       const parentFileType = isContainerBound ? 'spreadsheet' : 'standalone'
 
       // Deduplicate APIs by (url, method) to avoid unique constraint violations
+      console.log(`    [DEBUG] Raw APIs for ${scriptInfo.name}:`, analysis.externalApis.length)
       const seenApis = new Set<string>()
+      const duplicates: string[] = []
       const deduplicatedApis = analysis.externalApis.filter(api => {
         const key = `${api.url}::${api.method}`
         if (seenApis.has(key)) {
+          duplicates.push(key)
           return false
         }
         seenApis.add(key)
         return true
       })
+      if (duplicates.length > 0) {
+        console.log(`    [DEBUG] Filtered ${duplicates.length} duplicate APIs:`, duplicates)
+      }
+      console.log(`    [DEBUG] Deduplicated APIs:`, deduplicatedApis.length)
+      // Log what we're about to insert
+      const insertKeys = deduplicatedApis.map(api => `${api.url}::${api.method}`)
+      const insertKeySet = new Set(insertKeys)
+      if (insertKeys.length !== insertKeySet.size) {
+        console.log(`    [ERROR] Still have duplicates after dedup! Keys:`, insertKeys)
+      }
 
       // Store in database with upsert
       await prisma.script.upsert({
