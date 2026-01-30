@@ -105,29 +105,28 @@ export async function syncToDatabase(): Promise<SyncResult> {
       const isContainerBound = scriptInfo.source === 'container-bound' && scriptInfo.parentId
       const parentFileType = isContainerBound ? 'spreadsheet' : 'standalone'
 
-      // Deduplicate APIs by (url, method) to avoid unique constraint violations
-      console.log(`    [DEBUG] Raw APIs for ${scriptInfo.name}:`, analysis.externalApis.length)
-      const seenApis = new Set<string>()
-      const duplicates: string[] = []
-      const deduplicatedApis = analysis.externalApis.filter(api => {
-        const key = `${api.url}::${api.method}`
-        if (seenApis.has(key)) {
-          duplicates.push(key)
-          return false
+      // Normalize URL: remove trailing slashes, lowercase protocol/host
+      const normalizeUrl = (url: string): string => {
+        try {
+          const parsed = new URL(url)
+          // Normalize: lowercase protocol and host, remove trailing slash from path
+          let path = parsed.pathname.replace(/\/+$/, '') || '/'
+          return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}${path}`
+        } catch {
+          return url.toLowerCase().replace(/\/+$/, '')
         }
-        seenApis.add(key)
-        return true
-      })
-      if (duplicates.length > 0) {
-        console.log(`    [DEBUG] Filtered ${duplicates.length} duplicate APIs:`, duplicates)
       }
-      console.log(`    [DEBUG] Deduplicated APIs:`, deduplicatedApis.length)
-      // Log what we're about to insert
-      const insertKeys = deduplicatedApis.map(api => `${api.url}::${api.method}`)
-      const insertKeySet = new Set(insertKeys)
-      if (insertKeys.length !== insertKeySet.size) {
-        console.log(`    [ERROR] Still have duplicates after dedup! Keys:`, insertKeys)
+      
+      // Deduplicate APIs by normalized (url, method) to avoid unique constraint violations
+      const seenApis = new Map<string, typeof analysis.externalApis[0]>()
+      for (const api of analysis.externalApis) {
+        const normalizedUrl = normalizeUrl(api.url)
+        const key = `${normalizedUrl}::${api.method.toUpperCase()}`
+        if (!seenApis.has(key)) {
+          seenApis.set(key, { ...api, url: normalizedUrl, method: api.method.toUpperCase() })
+        }
       }
+      const deduplicatedApis = Array.from(seenApis.values())
 
       // Store in database with upsert
       await prisma.script.upsert({
