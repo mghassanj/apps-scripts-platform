@@ -64,6 +64,7 @@ export async function GET(request: Request) {
 
 // POST - Trigger sync and analysis
 export async function POST(request: Request) {
+  console.log('[SYNC-API-V3] POST /api/sync called')
   try {
     const body = await request.json().catch(() => ({}))
     const {
