@@ -6,6 +6,48 @@ import { promisify } from 'util'
 
 const execAsync = promisify(exec)
 
+// Rate limiting constants
+const BATCH_SIZE = 10              // Process 10 scripts at a time
+const DELAY_BETWEEN_CALLS_MS = 600 // 600ms between individual API calls
+const DELAY_BETWEEN_BATCHES_MS = 3000 // 3s pause between batches
+
+// Helper: sleep for rate limiting
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+// Helper: exponential backoff retry
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelayMs: number = 1000
+): Promise<T> {
+  let lastError: Error | undefined
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (error: any) {
+      lastError = error
+      const message = error?.message || String(error)
+      // Don't retry on auth/permission/not-found errors
+      if (message.includes('403') || message.includes('404') || 
+          message.includes('invalid argument') || message.includes('forbidden') ||
+          message.includes('insufficient authentication')) {
+        throw error
+      }
+      // Retry on rate limit (429) or server errors (5xx)
+      if (attempt < maxRetries && (message.includes('429') || message.includes('quota') || message.includes('500') || message.includes('503'))) {
+        const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 500
+        console.log(`    Retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms...`)
+        await sleep(delay)
+        continue
+      }
+      throw error
+    }
+  }
+  throw lastError
+}
+
 export interface ExecutionSyncResult {
   synced: number
   failed: number
@@ -50,10 +92,13 @@ export async function fetchScriptExecutions(scriptId: string): Promise<{
     const scriptClient = getScriptClient()
 
     // Fetch processes (executions) for this script using listScriptProcesses
-    const response = await scriptClient.processes.listScriptProcesses({
-      scriptId,
-      pageSize: 300, // Get last 300 executions
-    })
+    // Wrapped in retry for transient errors (rate limits, server errors)
+    const response = await withRetry(() => 
+      scriptClient.processes.listScriptProcesses({
+        scriptId,
+        pageSize: 300, // Get last 300 executions
+      })
+    )
 
     const processes = response.data.processes || []
 
@@ -164,6 +209,25 @@ async function fetchLogsViaClasp(scriptId: string): Promise<{
   }
 }
 
+// Validate a script ID exists before trying to fetch executions
+async function validateScriptId(scriptId: string): Promise<{ valid: boolean; error?: string }> {
+  try {
+    const scriptClient = getScriptClient()
+    await withRetry(() => scriptClient.projects.get({ scriptId }))
+    return { valid: true }
+  } catch (error: any) {
+    const message = error?.message || String(error)
+    if (message.includes('404') || message.includes('invalid argument') || message.includes('not found')) {
+      return { valid: false, error: 'Script not found or deleted' }
+    }
+    if (message.includes('403') || message.includes('forbidden')) {
+      return { valid: false, error: 'No access to script' }
+    }
+    // For transient errors, assume valid
+    return { valid: true }
+  }
+}
+
 // Sync execution history for all scripts in the database
 export async function syncAllExecutions(): Promise<ExecutionSyncResult> {
   const result: ExecutionSyncResult = {
@@ -180,62 +244,105 @@ export async function syncAllExecutions(): Promise<ExecutionSyncResult> {
   console.log(`Syncing executions for ${scripts.length} scripts...`)
 
   let scopeError = false
+  const staleScripts: string[] = []
 
-  for (const script of scripts) {
-    try {
-      console.log(`  Fetching executions for: ${script.name}`)
+  // Process in batches to avoid rate limiting
+  for (let batchStart = 0; batchStart < scripts.length; batchStart += BATCH_SIZE) {
+    const batch = scripts.slice(batchStart, batchStart + BATCH_SIZE)
+    const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1
+    const totalBatches = Math.ceil(scripts.length / BATCH_SIZE)
+    console.log(`\n  Batch ${batchNum}/${totalBatches} (${batch.length} scripts)`)
 
-      // Try Apps Script API first
-      let { executions, error } = await fetchScriptExecutions(script.id)
+    for (const script of batch) {
+      try {
+        console.log(`  Fetching executions for: ${script.name}`)
 
-      // If scope error, note it and try clasp as fallback
-      if (error?.includes('insufficient authentication scopes')) {
-        scopeError = true
-        // Try clasp as alternative
-        const claspResult = await fetchLogsViaClasp(script.id)
-        if (claspResult.executions.length > 0) {
-          executions = claspResult.executions
-          error = undefined
+        // First, validate the script ID exists
+        const validation = await validateScriptId(script.id)
+        if (!validation.valid) {
+          console.log(`    STALE: ${validation.error}`)
+          staleScripts.push(script.id)
+          result.failed++
+          result.scripts.push({
+            id: script.id,
+            name: script.name,
+            executionsFetched: 0,
+            error: `STALE: ${validation.error}`
+          })
+          await sleep(DELAY_BETWEEN_CALLS_MS)
+          continue
         }
-      }
 
-      if (error) {
-        console.log(`    Error: ${error}`)
-        result.failed++
-        result.scripts.push({
-          id: script.id,
-          name: script.name,
-          executionsFetched: 0,
-          error
-        })
-        continue
-      }
+        // Rate limit between calls
+        await sleep(DELAY_BETWEEN_CALLS_MS)
 
-      if (executions.length === 0) {
-        console.log(`    No executions found`)
-        result.scripts.push({
-          id: script.id,
-          name: script.name,
-          executionsFetched: 0
-        })
-        continue
-      }
+        // Try Apps Script API first
+        let { executions, error } = await fetchScriptExecutions(script.id)
 
-      // Store executions in database (avoid duplicates by checking existing)
-      let newCount = 0
-      for (const exec of executions) {
-        // Check if execution already exists (by scriptId + startedAt + functionName)
-        const existing = await prisma.execution.findFirst({
-          where: {
-            scriptId: script.id,
-            startedAt: exec.startedAt,
-            functionName: exec.functionName
+        // If scope error, note it and try clasp as fallback
+        if (error?.includes('insufficient authentication scopes')) {
+          scopeError = true
+          // Try clasp as alternative
+          const claspResult = await fetchLogsViaClasp(script.id)
+          if (claspResult.executions.length > 0) {
+            executions = claspResult.executions
+            error = undefined
           }
-        })
+        }
 
-        if (!existing) {
-          await prisma.execution.create({
-            data: {
+        // Mark stale scripts (invalid argument = script ID is wrong/deleted)
+        if (error?.includes('invalid argument')) {
+          staleScripts.push(script.id)
+          console.log(`    STALE: Invalid script ID`)
+          result.failed++
+          result.scripts.push({
+            id: script.id,
+            name: script.name,
+            executionsFetched: 0,
+            error: 'STALE: Invalid script ID'
+          })
+          continue
+        }
+
+        if (error) {
+          console.log(`    Error: ${error}`)
+          result.failed++
+          result.scripts.push({
+            id: script.id,
+            name: script.name,
+            executionsFetched: 0,
+            error
+          })
+          continue
+        }
+
+        if (executions.length === 0) {
+          console.log(`    No executions found`)
+          result.scripts.push({
+            id: script.id,
+            name: script.name,
+            executionsFetched: 0
+          })
+          continue
+        }
+
+        // Store executions in database using batch upsert (avoid N+1 queries)
+        let newCount = 0
+        const existingExecs = await prisma.execution.findMany({
+          where: { scriptId: script.id },
+          select: { scriptId: true, startedAt: true, functionName: true }
+        })
+        const existingSet = new Set(
+          existingExecs.map(e => `${e.startedAt.toISOString()}::${e.functionName}`)
+        )
+
+        const newExecs = executions.filter(
+          exec => !existingSet.has(`${exec.startedAt.toISOString()}::${exec.functionName}`)
+        )
+
+        if (newExecs.length > 0) {
+          await prisma.execution.createMany({
+            data: newExecs.map(exec => ({
               scriptId: script.id,
               functionName: exec.functionName,
               startedAt: exec.startedAt,
@@ -243,36 +350,51 @@ export async function syncAllExecutions(): Promise<ExecutionSyncResult> {
               duration: exec.duration,
               status: exec.status,
               errorMessage: exec.errorMessage
-            }
+            })),
+            skipDuplicates: true
           })
-          newCount++
+          newCount = newExecs.length
         }
-      }
 
-      console.log(`    Synced ${newCount} new executions (${executions.length} total fetched)`)
-      result.synced++
-      result.scripts.push({
-        id: script.id,
-        name: script.name,
-        executionsFetched: newCount
-      })
-    } catch (error) {
-      console.error(`    Failed: ${script.name}`, error)
-      result.failed++
-      result.scripts.push({
-        id: script.id,
-        name: script.name,
-        executionsFetched: 0,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      })
+        console.log(`    Synced ${newCount} new executions (${executions.length} total fetched)`)
+        result.synced++
+        result.scripts.push({
+          id: script.id,
+          name: script.name,
+          executionsFetched: newCount
+        })
+      } catch (error) {
+        console.error(`    Failed: ${script.name}`, error)
+        result.failed++
+        result.scripts.push({
+          id: script.id,
+          name: script.name,
+          executionsFetched: 0,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        })
+      }
+    }
+
+    // Pause between batches (except after the last one)
+    if (batchStart + BATCH_SIZE < scripts.length) {
+      console.log(`  Pausing ${DELAY_BETWEEN_BATCHES_MS / 1000}s before next batch...`)
+      await sleep(DELAY_BETWEEN_BATCHES_MS)
     }
   }
 
-  console.log(`Execution sync complete: ${result.synced} synced, ${result.failed} failed`)
+  console.log(`\nExecution sync complete: ${result.synced} synced, ${result.failed} failed`)
 
-  // Add helpful message if scope error was encountered
+  // Flag stale scripts in the result
+  if (staleScripts.length > 0) {
+    console.log(`\n⚠️  ${staleScripts.length} stale scripts detected:`)
+    staleScripts.forEach(id => console.log(`    - ${id}`))
+    result.message = `${staleScripts.length} stale script(s) detected (invalid/deleted). Consider removing them from the database.`
+  }
+
+  // Add scope error message if encountered
   if (scopeError) {
-    result.message = 'OAuth scopes insufficient for execution logs. To enable: 1) Run "clasp login --creds" with script.processes scope, or 2) Use the MONITORING_SHEET_ID approach to track executions via a Google Sheet.'
+    const scopeMsg = 'OAuth scopes insufficient for execution logs. To enable: 1) Run "clasp login --creds" with script.processes scope, or 2) Use the MONITORING_SHEET_ID approach to track executions via a Google Sheet.'
+    result.message = result.message ? `${result.message}\n${scopeMsg}` : scopeMsg
   }
 
   return result

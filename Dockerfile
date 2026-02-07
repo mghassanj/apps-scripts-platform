@@ -2,6 +2,9 @@ FROM node:22-alpine
 
 WORKDIR /app
 
+# Install clasp CLI globally for script management
+RUN npm i -g @google/clasp
+
 # Copy package files
 COPY package*.json ./
 COPY prisma ./prisma/
